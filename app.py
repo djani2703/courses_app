@@ -47,47 +47,65 @@ db_fields_and_types = {
 }
 
 
-def get_required_fields(data):
-    if request.method in ['PATCH', 'GET']:
-        return [
-            field for field in data.keys()
-        ]
-    elif request.method in ['POST', 'PUT']:
-        return db_fields_and_types.keys()
+def get_valid_request_data():
+    try:
+        request_data = request.get_json()
+    except Exception:
+        return {'error': 'Incorrect request data..'}
+    else:
+        return request_data
+
+
+def get_valid_date(data):
+    try:
+        date = datetime.strptime(data, '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return False
+    else:
+        return date
 
 
 def request_data_handler():
     if not request.is_json:
         return {'error': 'No json received..'}
 
-    try:
-        data = request.get_json()
-    except Exception:
-        return {'error': 'Incorrect request data..'}
+    request_data = get_valid_request_data()
 
-    required_fields = get_required_fields(data)
+    if 'error' in request_data:
+        return request_data
+
+    fields = db_fields_and_types.keys()
+
+    if request.method in ['GET', 'PATCH']:
+        fields = request_data.keys()
+
     valid_data = dict()
 
-    for field in required_fields:
-        if field not in data:
+    for field in fields:
+        if field not in request_data:
             return {'error': f"Field '{field}' not found.."}
 
-        if db_fields_and_types.get(field) == datetime:
-            try:
-                valid_data.update({
-                    field: datetime.strptime(data[field], '%Y-%m-%d %H:%M:%S')
-                })
-            except Exception:
-                return {'error': f"Incorrect type of '{field}' field.."}
-        else:
-            if (field in db_fields_and_types.keys() and not
-                isinstance(data.get(field), db_fields_and_types.get(field))):
-                return {'error': f"Incorrect type of '{field}' field.."}
-            valid_data.update({field: data[field]})
+        current_data = request_data[field]
+        is_date = get_valid_date(current_data)
+
+        if is_date:
+            current_data = is_date
+
+        if (field in db_fields_and_types.keys() and
+                not isinstance(current_data, db_fields_and_types.get(field))):
+            return {'error': f"Incorrect type of '{field}' field.."}
+
+        valid_data.update({field: current_data})
     return valid_data
 
 
 # Routes:
+# 0. Incorrect request address:
+@app.errorhandler(404)
+def address_not_found(_):
+    return make_response(jsonify({'error': 'Non-existent address ..'}), 404)
+
+
 # 1. Add a new course:
 @app.route('/courses/add', methods=['POST'])
 def add_course():
@@ -109,7 +127,7 @@ def add_course():
         db.session.rollback()
         return make_response(jsonify({'error': str(expt)}), 400)
     else:
-        return make_response(jsonify({'status': 'Course added!'}), 200)
+        return make_response(jsonify({'status': 'Course added!'}), 201)
 
 
 # 2. Get all courses:
@@ -128,29 +146,26 @@ def get_course_by_id(id):
     if course:
         course = Courses.get_readable_course(course)
         return make_response(jsonify(course), 200)
-    return make_response(jsonify({'status': "Can't show the course.."}), 200)
+    return make_response(jsonify({'status': 'Course not found..'}), 200)
 
 
 # 4. Get course datail by name and filter by date:
 @app.route('/courses/<name>', methods=['GET'])
 def get_courses_by_name_and_date(name):
-    process_data = request_data_handler()
 
-    if 'error' in process_data:
-        return make_response(jsonify(process_data), 400)
+    bottom_date = get_valid_date(
+        request.args.get('bottom_date')
+    )
+    top_date = get_valid_date(
+        request.args.get('top_date')
+    )
 
-    now = datetime.today()
-    bottom_date = process_data.get('bottom_date', now)
-    top_date = process_data.get('top_date', now.replace(year=now.year + 1))
+    if not isinstance(bottom_date, datetime):
+        bottom_date = datetime.today()
 
-    try:
-        if isinstance(bottom_date, str):
-            bottom_date = datetime.strptime(bottom_date, '%Y-%m-%d %H:%M:%S')
-
-        if isinstance(top_date, str):
-            top_date = datetime.strptime(top_date, '%Y-%m-%d %H:%M:%S')
-    except Exception as expt:
-        return make_response(jsonify({'error': str(expt)}), 400)
+    if not isinstance(top_date, datetime):
+        now = datetime.today()
+        top_date = now.replace(year=now.year + 1)
 
     courses = [
         Courses.get_readable_course(course)
@@ -165,7 +180,7 @@ def get_courses_by_name_and_date(name):
 
 # 5. Update course attributes:
 @app.route('/courses/<int:id>', methods=['PATCH'])
-def change_course(id):
+def update_course(id):
     process_data = request_data_handler()
 
     if 'error' in process_data:
