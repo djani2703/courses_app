@@ -76,7 +76,7 @@ def request_data_handler():
 
     fields = db_fields_and_types.keys()
 
-    if request.method in ['GET', 'PATCH']:
+    if request.method in ['PATCH']:
         fields = request_data.keys()
 
     valid_data = dict()
